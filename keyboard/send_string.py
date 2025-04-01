@@ -60,6 +60,7 @@ class BtkStringClient():
         # connect with the Bluetooth keyboard server
         print("setting up DBus Client")
         self.bus = dbus.SystemBus()
+        # ！wok看懂了这里是调用btk_server.py的send_keys方法！所以要改那边！
         self.btkservice = self.bus.get_object(
             'org.thanhle.btkbservice', '/org/thanhle/btkbservice')
         self.iface = dbus.Interface(self.btkservice, 'org.thanhle.btkbservice')

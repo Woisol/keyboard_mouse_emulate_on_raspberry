@@ -2,6 +2,7 @@
 #
 # Bluetooth keyboard/Mouse emulator DBUS Service
 #
+# !2025-03-31 23:34:01 拼尽全力无法战胜，始终只能在配对时accept而重连不行
 
 from __future__ import absolute_import, print_function
 from optparse import OptionParser, make_option
@@ -25,8 +26,9 @@ logging.basicConfig(level=logging.DEBUG)
 
 class BTKbDevice():
     # change these constants
-    MY_ADDRESS = "B8:27:EB:C5:B3:27"
-    MY_DEV_NAME = "ThanhLe_Keyboard_Mouse"
+    MY_ADDRESS = "B0:AC:82:FB:BE:EC"
+    MY_DEV_NAME = "ISer"
+    TARGET_ADDRESS = "74:97:79:E3:6E:A2"
 
     # define some constants
     P_CTRL = 17  # Service port - must match port configured in SDP record
@@ -65,7 +67,8 @@ class BTKbDevice():
             "org.bluez", "/org/bluez"), "org.bluez.ProfileManager1")
         manager.RegisterProfile("/org/bluez/hci0", BTKbDevice.UUID, opts)
         print("6. Profile registered ")
-        os.system("hciconfig hci0 class 0x0025C0")
+        os.system("hciconfig hci0 class 0x002540")
+        # os.system("hciconfig hci0 class 0x0025C0")
 
     # read and return an sdp record from a file
     def read_sdp_service_record(self):
@@ -79,10 +82,59 @@ class BTKbDevice():
     # listen for incoming client connections
     def listen(self):
         print("\033[0;33m7. Waiting for connections\033[0m")
-        self.scontrol = socket.socket(
-            socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)  # BluetoothSocket(L2CAP)
-        self.sinterrupt = socket.socket(
-            socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)  # BluetoothSocket(L2CAP)
+        # if hasattr(self,"scontrol"):
+            # 完全重置所有socket连接
+        for sock in ['ccontrol', 'cinterrupt','scontrol', 'sinterrupt']:
+            if hasattr(self, sock):
+                getattr(self, sock).close()
+                delattr(self, sock)
+
+        # 重新初始化socket
+        self.scontrol = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+        self.sinterrupt = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+
+        # 设置socket参数
+        self.scontrol.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sinterrupt.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        # 绑定端口
+        self.scontrol.bind((socket.BDADDR_ANY, self.P_CTRL))
+        self.sinterrupt.bind((socket.BDADDR_ANY, self.P_INTR))
+
+        # 非阻塞模式
+        # self.scontrol.settimeout(10.0)
+        # self.sinterrupt.settimeout(10.0)
+
+        # 尝试连接
+        try:
+            # !重新设置也依然报错connection refuse
+            """
+            具体
+            sudo journalctl -u bluetooth -f
+            4月 01 22:37:58 ISer bluetoothd[203113]: src/profile.c:ext_io_disconnected() Unable to get io data for Hands-Free Voice gateway: getpeername: Transport endpoint is not connected (107)
+            4月 01 22:38:01 ISer bluetoothd[203113]: src/profile.c:ext_io_disconnected() Unable to get io data for Hands-Free unit: getpeername: Transport endpoint is not connected (107)
+            4月 01 22:38:28 ISer bluetoothd[203113]: src/profile.c:ext_io_disconnected() Unable to get io data for Hands-Free unit: getpeername: Transport endpoint is not connected (107)
+            4月 01 22:39:34 ISer bluetoothd[203113]: profiles/audio/a2dp.c:a2dp_select_capabilities() Unable to select SEP
+            4月 01 22:39:34 ISer bluetoothd[203113]: src/service.c:btd_service_connect() a2dp-source profile connect failed for 74:97:79:E3:6E:A2: Device or resource busy
+            4月 01 22:39:54 ISer bluetoothd[203113]: src/profile.c:ext_io_disconnected() Unable to get io data for Hands-Free Voice gateway: getpeername: Transport endpoint is not connected (107)
+            4月 01 22:43:07 ISer bluetoothd[203113]: src/profile.c:ext_io_disconnected() Unable to get io data for Hands-Free unit: getpeername: Transport endpoint is not connected (107)
+            4月 01 22:43:08 ISer bluetoothd[203113]: profiles/audio/a2dp.c:a2dp_select_capabilities() Unable to select SEP
+            4月 01 22:43:08 ISer bluetoothd[203113]: src/service.c:btd_service_connect() a2dp-source profile connect failed for 74:97:79:E3:6E:A2: Device or resource busy
+            4月 01 22:43:28 ISer bluetoothd[203113]: src/profile.c:ext_io_disconnected() Unable to get io data for Hands-Free Voice gateway: getpeername: Transport endpoint is not connected (107)
+            """
+            # !host is down指蓝牙没有连接
+            # os.system("hciconfig hci0 reset")
+            # os.system("bluetoothctl connect "+ self.TARGET_ADDRESS)
+            self.scontrol.connect((self.TARGET_ADDRESS, self.P_CTRL))
+            self.sinterrupt.connect((self.TARGET_ADDRESS, self.P_INTR))
+            print("\033[0;32mReconnected successfully\033[0m")
+            return
+        except socket.error as e:
+            print(f"\033[0;31mReconnect failed: {e}\033[0m")
+            # 失败后进入完整初始化流程
+
+        self.scontrol = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)  # BluetoothSocket(L2CAP)
+        self.sinterrupt = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)  # BluetoothSocket(L2CAP)
         self.scontrol.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sinterrupt.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # bind these sockets to a port - port zero to select next available
@@ -92,6 +144,14 @@ class BTKbDevice():
         # Start listening on the server sockets
         self.scontrol.listen(5)
         self.sinterrupt.listen(5)
+
+        # self.scontrol.
+
+        # self.sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+        # self.sock.connect((target_address, 1))
+        #             print(
+        #     "\033[0;32mUsing previous connecton\033[0m")
+
 
         self.ccontrol, cinfo = self.scontrol.accept()
         print (
@@ -104,9 +164,14 @@ class BTKbDevice():
     # send a string to the bluetooth host machine
     def send_string(self, message):
         try:
-            self.cinterrupt.send(bytes(message))
+            if hasattr(self,"cinterrupt"):
+                self.cinterrupt.send(bytes(message))
+            else:
+                self.sinterrupt.send(bytes(message))
         except OSError as err:
             error(err)
+            self.listen()
+            self.sock.send(bytes(message))
 
 
 class BTKbService(dbus.service.Object):
